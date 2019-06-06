@@ -1,6 +1,6 @@
 // Copyright 2014 Facebook
 
-#include "cuda/KernelTimer.h"
+#include "src/KernelTimer.h"
 
 #include "THC.h"
 #include "THCTensor.h"
@@ -49,12 +49,12 @@ float timedRun(THCState* state,
     if (fftPlan < 0) {
       localPlan = makeCuFFTPlan<Batch, Dim>(timeTensor, frequencyTensor, p);
     }
-    cuda::KernelTimer timer;
+    KernelTimer timer;
     fft<Batch, Dim>(timeTensor, frequencyTensor, p, &localPlan);
     auto timeMS = timer.stop();
     return timeMS;
   } else {
-    cuda::KernelTimer timer;
+    KernelTimer timer;
     auto result = fbfft<Batch>(
       state,
       timeTHTensor, frequencyTHTensor, bufferTHTensor, (FBFFTParameters)p);

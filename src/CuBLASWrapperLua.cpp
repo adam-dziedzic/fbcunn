@@ -1,6 +1,6 @@
 // Copyright 2014 Facebook
 
-#include "cuda/KernelTimer.h"
+#include "src/KernelTimer.h"
 #include "cuda/util/CachedDeviceProperties.h"
 #include "src/Utils.h"
 #include "src/DeviceTensorUtils.h"
@@ -90,7 +90,7 @@ int matmult(lua_State* L, bool asComplex = false) {
     auto time = 0.0f;
     constexpr long kNumTrials = 5;
     for (int i = 0; i < kNumTrials; ++i) {
-      cuda::KernelTimer timer;
+      KernelTimer timer;
       switch (dims) {
         MATMULT_CASE(2);
         MATMULT_CASE(3);

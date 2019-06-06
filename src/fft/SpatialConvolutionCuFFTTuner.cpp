@@ -2,7 +2,7 @@
 
 #include "src/fft/SpatialConvolutionCuFFTTuner.h"
 
-#include "cuda/KernelTimer.h"
+#include "src/KernelTimer.h"
 #include "THC.h"
 #include "src/fft/CuFFTStrategy.h"
 #include "src/fft/SpatialConvolutionCuFFT.h"
@@ -65,7 +65,7 @@ getBestRun(THCState* state, ProblemSizes pbs) {
                                      // can increase this if there is
                                      // a problem
       for (int i = 0; i < kNumTrials; ++i) {
-        cuda::KernelTimer timer;
+        KernelTimer timer;
         funPass.first(state, thp, pbs, strat);
         time += timer.stop();
       }

@@ -4,13 +4,17 @@ IF(APPLE)
     message(STATUS "FBCUNN Untested/Unsupported on OSX")
 ENDIF()
 
+message(STATUS, "${CUDA_LIBRARIES}=${${CUDA_LIBRARIES}}")
+message(STATUS, "=${}")
+message(STATUS, "${CUDA_CUBLAS_LIBRARIES}=${${CUDA_CUBLAS_LIBRARIES}}")
+
 SET(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" "${CMAKE_MODULE_PATH}")
 
 FIND_PACKAGE(Torch REQUIRED)
 INCLUDE(MultiLevelIncludes)
 MLI_SET_DEPTH(2)
 FIND_PACKAGE(Folly REQUIRED)
-FIND_PACKAGE(CUDA 7.5 REQUIRED)
+FIND_PACKAGE(CUDA 8.0 REQUIRED)
 LIST(APPEND CUDA_NVCC_FLAGS "-arch=sm_35")
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 
@@ -138,7 +142,7 @@ SET(src-cuda
   src/HalfPrecKernels.cu
   )
 CUDA_ADD_LIBRARY(libcudahalf SHARED ${src-cuda})
-TARGET_LINK_LIBRARIES(libcudahalf luaT THC TH thpp folly util ${CUDA_LIBRARIES} ${CUDA_CUFFT_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES})
+TARGET_LINK_LIBRARIES(libcudahalf luaT THC TH thpp folly util ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES})
 
 SET_TARGET_PROPERTIES(libcudahalf PROPERTIES
   PREFIX ""
@@ -154,7 +158,12 @@ SET(src-cuda
   src/CuBLASWrapper.cpp
   )
 CUDA_ADD_LIBRARY(cublas_wrapper SHARED ${src-cuda})
-TARGET_LINK_LIBRARIES(cublas_wrapper luaT THC TH thpp folly ${CUDA_LIBRARIES} ${CUDA_CUFFT_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES})
+
+message(STATUS, "${CUDA_LIBRARIES}=${${CUDA_LIBRARIES}}")
+message(STATUS, "=${}")
+message(STATUS, "${CUDA_CUBLAS_LIBRARIES}=${${CUDA_CUBLAS_LIBRARIES}}")
+
+TARGET_LINK_LIBRARIES(cublas_wrapper luaT THC TH thpp folly ${CUDA_LIBRARIES}  ${CUDA_CUBLAS_LIBRARIES})
 
 SET_TARGET_PROPERTIES(cublas_wrapper PROPERTIES
   PREFIX ""
@@ -169,7 +178,7 @@ SET(src-cuda
   src/MM.cu
   )
 CUDA_ADD_LIBRARY(torch_fb_fbcunn_mm SHARED ${src-cuda})
-TARGET_LINK_LIBRARIES(torch_fb_fbcunn_mm luaT THC TH thpp folly ${CUDA_LIBRARIES} ${CUDA_CUFFT_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES})
+TARGET_LINK_LIBRARIES(torch_fb_fbcunn_mm luaT THC TH thpp folly ${CUDA_LIBRARIES}  ${CUDA_CUBLAS_LIBRARIES})
 
 SET_TARGET_PROPERTIES(torch_fb_fbcunn_mm PROPERTIES
   PREFIX ""
@@ -184,7 +193,7 @@ SET(src-cuda
   src/fft/FFTIteratedConvolution.cu
   )
 CUDA_ADD_LIBRARY(torch_fb_fbcunn_FFTIteratedConvolution SHARED ${src-cuda})
-TARGET_LINK_LIBRARIES(torch_fb_fbcunn_FFTIteratedConvolution luaT THC TH thpp folly ${CUDA_LIBRARIES} ${CUDA_CUFFT_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES})
+TARGET_LINK_LIBRARIES(torch_fb_fbcunn_FFTIteratedConvolution luaT THC TH thpp folly ${CUDA_LIBRARIES}  ${CUDA_CUBLAS_LIBRARIES})
 
 SET_TARGET_PROPERTIES(torch_fb_fbcunn_FFTIteratedConvolution PROPERTIES
   PREFIX ""
@@ -200,7 +209,7 @@ SET(src-cuda
   src/SpatialBatchNormalization.cu
   )
 CUDA_ADD_LIBRARY(torch_fb_fbcunn_batch_norm SHARED ${src-cuda})
-TARGET_LINK_LIBRARIES(torch_fb_fbcunn_batch_norm luaT THC TH thpp folly ${CUDA_LIBRARIES} ${CUDA_CUFFT_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES})
+TARGET_LINK_LIBRARIES(torch_fb_fbcunn_batch_norm luaT THC TH thpp folly ${CUDA_LIBRARIES}  ${CUDA_CUBLAS_LIBRARIES})
 
 SET_TARGET_PROPERTIES(torch_fb_fbcunn_batch_norm PROPERTIES
   PREFIX ""
@@ -293,7 +302,7 @@ SET(src-cuda
   src/fft/CuFFTConvolution_UpdateGradInput.cu
   )
 CUDA_ADD_LIBRARY(cufft_convolution_cuda SHARED ${src-cuda})
-TARGET_LINK_LIBRARIES(cufft_convolution_cuda luaT THC TH thpp folly libtorch_fb_fbcunn_convolution_bias cublas_wrapper cufft_wrapper cufft_convolution_host ${CUDA_LIBRARIES} ${CUDA_CUFFT_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES})
+TARGET_LINK_LIBRARIES(cufft_convolution_cuda luaT THC TH thpp folly libtorch_fb_fbcunn_convolution_bias cublas_wrapper cufft_wrapper cufft_convolution_host ${CUDA_LIBRARIES}  ${CUDA_CUBLAS_LIBRARIES})
 
 SET_TARGET_PROPERTIES(cufft_convolution_cuda PROPERTIES
   PREFIX ""
@@ -323,7 +332,7 @@ SET(src-cuda
   src/fft/CuFFTWrapper.cu
   )
 CUDA_ADD_LIBRARY(cufft_wrapper SHARED ${src-cuda})
-TARGET_LINK_LIBRARIES(cufft_wrapper luaT THC TH thpp folly ${CUDA_LIBRARIES} ${CUDA_CUFFT_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES})
+TARGET_LINK_LIBRARIES(cufft_wrapper luaT THC TH thpp folly ${CUDA_LIBRARIES}  ${CUDA_CUBLAS_LIBRARIES})
 
 SET_TARGET_PROPERTIES(cufft_wrapper PROPERTIES
   PREFIX ""
@@ -383,7 +392,7 @@ INSTALL(TARGETS fbcuda_util
 
 ################# fbcuda_kernel_timer
 SET(src-cuda
-  cuda/KernelTimer.cpp
+  src/KernelTimer.cpp
   )
 CUDA_ADD_LIBRARY(fbcuda_kernel_timer SHARED ${src-cuda})
 TARGET_LINK_LIBRARIES(fbcuda_kernel_timer luaT THC TH thpp folly)
