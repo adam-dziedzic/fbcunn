@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <opencv2/opencv.hpp>
+#include <opencv2/dnn.hpp>
 
 #define checkCUDNN(expression)                               \
   {                                                          \
@@ -28,13 +29,28 @@ static void HandleError(cudaError_t err,
 #define HANDLE_ERROR(err) (HandleError( err, __FILE__, __LINE__ ))
 
 
-cv::Mat load_image(const char *image_path) {
+cv::Mat load_image(const char *image_path, cudnnTensorFormat_t format) {
     cv::Mat image = cv::imread(image_path, CV_LOAD_IMAGE_COLOR);
     image.convertTo(image, CV_32FC3);
     cv::normalize(image, image, 0, 1, cv::NORM_MINMAX);
     std::cerr << "Input Image: " << image.rows << " x " << image.cols << " x "
               << image.channels() << std::endl;
-    return image;
+    if (format == CUDNN_TENSOR_NHWC) {
+        return image;
+    } else if (format == CUDNN_TENSOR_NCHW) {
+        cv::Mat inputBlob = cv::dnn::blobFromImage(
+                /*image*/image,
+                /*scale_factor*/1.0f,
+                /*size*/cv::Size(image.rows, image.cols),
+                /*mean*/cv::Scalar(0, 0, 0),
+                /*swapRB*/false,
+                /*crop*/true);
+        return inputBlob;
+    } else {
+        std::cerr << "Unknown format: " << format << std::endl;
+        exit(1);
+    }
+
 }
 
 void save_image(const char *output_filename,
@@ -68,7 +84,12 @@ int main(int argc, const char *argv[]) {
               << std::endl;
 
 
+    const int max_kernel_height = 13;
+    const int max_kernel_width = 13;
+
+
     int in_batch_size = 1;
+    int in_channels = 3;
     int out_channels = 3;
     int kernel_height = 3;
     int kernel_width = 3;
@@ -76,20 +97,63 @@ int main(int argc, const char *argv[]) {
     int pad_width = 1;
     int vertical_stride = 1;
     int horizontal_stride = 1;
+    cudnnTensorFormat_t format = CUDNN_TENSOR_NHWC;
 
-    bool tests = false;
+    bool tests = true;
     if (tests == true) {
-        in_batch_size = 32;
+        in_batch_size = 128;
+        in_channels = 3;
         out_channels = 64;
         kernel_height = 7;
         kernel_width = 7;
-        pad_height = 3;
-        pad_width = 3;
+        pad_height = int(kernel_height / 2);
+        pad_width = int(kernel_width / 2);
         vertical_stride = 2;
         horizontal_stride = 2;
+        format = CUDNN_TENSOR_NHWC;
     }
 
-    cv::Mat image = load_image(argv[1]);
+    /*
+    0 CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM
+        This algorithm expresses the convolution as a matrix product without
+        actually explicitly form the matrix that holds the input tensor data.
+    1 CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM
+        This algorithm expresses the convolution as a matrix product without
+        actually explicitly form the matrix that holds the input tensor data,
+        but still needs some memory workspace to precompute some indices in
+        order to facilitate the implicit construction of the matrix that holds
+        the input tensor data.
+    2 CUDNN_CONVOLUTION_FWD_ALGO_GEMM
+        This algorithm expresses the convolution as an explicit matrix product.
+        A significant memory workspace is needed to store the matrix that holds
+        the input tensor data.
+    3 CUDNN_CONVOLUTION_FWD_ALGO_DIRECT
+        This algorithm expresses the convolution as a direct convolution (e.g
+        without implicitly or explicitly doing a matrix multiplication).
+    4 CUDNN_CONVOLUTION_FWD_ALGO_FFT
+        This algorithm uses the Fast-Fourier Transform approach to compute the
+        convolution. A significant memory workspace is needed to store
+        intermediate results.
+    5 CUDNN_CONVOLUTION_FWD_ALGO_FFT_TILING
+        This algorithm uses the Fast-Fourier Transform approach but splits the
+        inputs into tiles. A significant memory workspace is needed to store
+        intermediate results but less than CUDNN_CONVOLUTION_FWD_ALGO_FFT for
+        large size images.
+    6 CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD
+        This algorithm uses the Winograd Transform approach to compute the
+        convolution. A reasonably sized workspace is needed to store
+        intermediate results.
+    7 CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD_NONFUSED
+        This algorithm uses the Winograd Transform approach to compute the
+        convolution. Significant workspace may be needed to store intermediate
+        results.
+     */
+    // cudnnConvolutionFwdAlgo_t convolution_algorithm = CUDNN_CONVOLUTION_FWD_ALGO_FFT_TILING;
+    // cudnnConvolutionFwdAlgo_t convolution_algorithm = CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD;
+    cudnnConvolutionFwdAlgo_t convolution_algorithm = CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM;
+
+    std::cout << "format: " << format << std::endl;
+    cv::Mat image = load_image(argv[1], format);
 
     cudaSetDevice(gpu_id);
 
@@ -99,10 +163,10 @@ int main(int argc, const char *argv[]) {
     cudnnTensorDescriptor_t input_descriptor;
     checkCUDNN(cudnnCreateTensorDescriptor(&input_descriptor));
     checkCUDNN(cudnnSetTensor4dDescriptor(input_descriptor,
-            /*format=*/CUDNN_TENSOR_NHWC,
+            /*format=*/format,
             /*dataType=*/CUDNN_DATA_FLOAT,
             /*batch_size=*/in_batch_size,
-            /*channels=*/3,
+            /*channels=*/in_channels,
             /*image_height=*/image.rows,
             /*image_width=*/image.cols));
 
@@ -112,7 +176,7 @@ int main(int argc, const char *argv[]) {
             /*dataType=*/CUDNN_DATA_FLOAT,
             /*format=*/CUDNN_TENSOR_NCHW,
             /*out_channels=*/out_channels,
-            /*in_channels=*/3,
+            /*in_channels=*/in_channels,
             /*kernel_height=*/kernel_height,
             /*kernel_width=*/kernel_width));
 
@@ -137,19 +201,19 @@ int main(int argc, const char *argv[]) {
                                                      &height,
                                                      &width));
 
-    std::cerr << "Output Image: " << height << " x " << width << " x "
-              << channels
-              << std::endl;
+    std::cerr << "Output Image: " << batch_size << " x " << height
+              << " x "
+              << width << " x " << channels << std::endl;
 
     cudnnTensorDescriptor_t output_descriptor;
     checkCUDNN(cudnnCreateTensorDescriptor(&output_descriptor));
     checkCUDNN(cudnnSetTensor4dDescriptor(output_descriptor,
-            /*format=*/CUDNN_TENSOR_NHWC,
+            /*format=*/format,
             /*dataType=*/CUDNN_DATA_FLOAT,
-            /*batch_size=*/1,
-            /*channels=*/3,
-            /*image_height=*/image.rows,
-            /*image_width=*/image.cols));
+            /*batch_size=*/batch_size,
+            /*channels=*/channels,
+            /*image_height=*/height,
+            /*image_width=*/width));
 
     const int requestedAlgoCount = 8;
     int returnedAlgoCount = 8;
@@ -187,16 +251,17 @@ int main(int argc, const char *argv[]) {
 //                << std::endl;
 //  }
 
-    cudnnConvolutionFwdAlgo_t convolution_algorithm;
-    checkCUDNN(
-            cudnnGetConvolutionForwardAlgorithm(cudnn,
-                                                input_descriptor,
-                                                kernel_descriptor,
-                                                convolution_descriptor,
-                                                output_descriptor,
-                                                CUDNN_CONVOLUTION_FWD_PREFER_FASTEST,
-                    /*memoryLimitInBytes=*/0,
-                                                &convolution_algorithm));
+    if (convolution_algorithm < 0) {
+        checkCUDNN(
+                cudnnGetConvolutionForwardAlgorithm(cudnn,
+                                                    input_descriptor,
+                                                    kernel_descriptor,
+                                                    convolution_descriptor,
+                                                    output_descriptor,
+                                                    CUDNN_CONVOLUTION_FWD_PREFER_FASTEST,
+                        /*memoryLimitInBytes=*/0,
+                                                    &convolution_algorithm));
+    }
 
     // https://docs.nvidia.com/deeplearning/sdk/cudnn-developer-guide/index.html#cudnnConvolutionFwdAlgo_t
     std::cout << "# convolution algorithm: " << convolution_algorithm
@@ -217,30 +282,43 @@ int main(int argc, const char *argv[]) {
     void *d_workspace{nullptr};
     cudaMalloc(&d_workspace, workspace_bytes);
 
-    int image_bytes = batch_size * channels * height * width * sizeof(float);
+    int image_bytes = in_channels * height * width * sizeof(float);
 
     float *d_input{nullptr};
-    cudaMalloc(&d_input, image_bytes);
-    cudaMemcpy(d_input, image.ptr<float>(0), image_bytes,
-               cudaMemcpyHostToDevice);
+    cudaMalloc(&d_input, image_bytes * batch_size);
+    // Copy the same image batch_size number.
+    for (int i = 0; i < batch_size; ++i)
+        cudaMemcpy(d_input + i * image_bytes, image.ptr<float>(0), image_bytes,
+                   cudaMemcpyHostToDevice);
 
+    int output_size = batch_size * height * width * channels;
     float *d_output{nullptr};
-    cudaMalloc(&d_output, image_bytes);
-    cudaMemset(d_output, 0, image_bytes);
+    cudaMalloc(&d_output, output_size);
+    cudaMemset(d_output, 0, output_size);
 
     // clang-format off
-    const float kernel_template[3][3] = {
-            {1, 1,  1},
-            {1, -8, 1},
-            {1, 1,  1}
+    const float kernel_template[max_kernel_height][max_kernel_width] = {
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, 1.5,  1.5,  2.0, 3.1, 5.3,  6.3},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, -8.9, 10.5, 4.3, 5.3, -1.3, -2.3},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, 1.6,  9.5,  5.3, 1.3, 2.3,  -0.31},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, 1.1,  -1.5, 2.1, 3.1, 5.1,  6.1},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, -8.9, 2.5,  4.1, 5.1, -1.1, -2.1},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, 1.2,  3.5,  5.1, 1.1, 2.1,  -1.1},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, 1.3,  1.5,  2.1, 3.1, 5.2,  6.1},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, 1.5,  1.5,  2.0, 3.1, 5.3,  6.3},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, 1.5,  1.5,  2.0, 3.1, 5.3,  6.3},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, 1.5,  1.5,  2.0, 3.1, 5.3,  6.3},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, 1.5,  1.5,  2.0, 3.1, 5.3,  6.3},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, 1.5,  1.5,  2.0, 3.1, 5.3,  6.3},
+            {2.3, 4.1, 1.1, 8.1, -1.2, 0.9, 1.7, 1.5,  1.5,  2.0, 3.1, 5.3,  6.3},
     };
     // clang-format on
 
-    float h_kernel[3][3][3][3];
-    for (int kernel = 0; kernel < 3; ++kernel) {
-        for (int channel = 0; channel < 3; ++channel) {
-            for (int row = 0; row < 3; ++row) {
-                for (int column = 0; column < 3; ++column) {
+    float h_kernel[out_channels][in_channels][kernel_height][kernel_width];
+    for (int kernel = 0; kernel < out_channels; ++kernel) {
+        for (int channel = 0; channel < in_channels; ++channel) {
+            for (int row = 0; row < kernel_width; ++row) {
+                for (int column = 0; column < kernel_height; ++column) {
                     h_kernel[kernel][channel][row][column] = kernel_template[row][column];
                 }
             }
@@ -253,6 +331,11 @@ int main(int argc, const char *argv[]) {
 
     const float alpha = 1.0f, beta = 0.0f;
 
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
     checkCUDNN(cudnnConvolutionForward(cudnn,
                                        &alpha,
                                        input_descriptor,
@@ -266,6 +349,12 @@ int main(int argc, const char *argv[]) {
                                        &beta,
                                        output_descriptor,
                                        d_output));
+    cudaEventRecord(stop);
+
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    std::cout << "cuda elapsed time (ms): " << milliseconds << std::endl;
 
     if (with_sigmoid) {
         cudnnActivationDescriptor_t activation_descriptor;

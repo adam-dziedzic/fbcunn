@@ -10,7 +10,7 @@ all: conv
 
 conv: $(TARGET).cu
 	$(CXX) $(CXXFLAGS) $(DEBUG_FLAGS) $(HEADERS) $(LIBS) $(TARGET).cu -o \
-	$(TARGET) -lcudnn -lopencv_imgcodecs -lopencv_imgproc -lopencv_core
+	$(TARGET) -lcudnn -lopencv_imgcodecs -lopencv_imgproc -lopencv_core -lopencv_dnn
 
 .phony: clean
 
