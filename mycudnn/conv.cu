@@ -29,7 +29,8 @@ static void HandleError(cudaError_t err,
 #define HANDLE_ERROR(err) (HandleError( err, __FILE__, __LINE__ ))
 
 
-cv::Mat load_image(const char *image_path, cudnnTensorFormat_t format) {
+cv::Mat load_image(
+        const char *image_path, cudnnTensorFormat_t format, int H, int W) {
     cv::Mat image = cv::imread(image_path, CV_LOAD_IMAGE_COLOR);
     image.convertTo(image, CV_32FC3);
     cv::normalize(image, image, 0, 1, cv::NORM_MINMAX);
@@ -41,7 +42,8 @@ cv::Mat load_image(const char *image_path, cudnnTensorFormat_t format) {
         cv::Mat inputBlob = cv::dnn::blobFromImage(
                 /*image*/image,
                 /*scale_factor*/1.0f,
-                /*size*/cv::Size(image.rows, image.cols),
+                ///*size*/cv::Size(image.rows, image.cols),
+                /*size*/cv::Size(H, W),
                 /*mean*/cv::Scalar(0, 0, 0),
                 /*swapRB*/false,
                 /*crop*/true);
@@ -89,6 +91,8 @@ int main(int argc, const char *argv[]) {
 
 
     int in_batch_size = 1;
+    int H = 224;
+    int W = 224;
     int in_channels = 3;
     int out_channels = 3;
     int kernel_height = 3;
@@ -102,16 +106,31 @@ int main(int argc, const char *argv[]) {
     bool tests = true;
     if (tests == true) {
         in_batch_size = 128;
+        H = 224;
+        W = 224;
         in_channels = 3;
         out_channels = 64;
         kernel_height = 7;
         kernel_width = 7;
         pad_height = int(kernel_height / 2);
         pad_width = int(kernel_width / 2);
-        vertical_stride = 2;
-        horizontal_stride = 2;
-        format = CUDNN_TENSOR_NHWC;
+        vertical_stride = 1;
+        horizontal_stride = 1;
+        format = CUDNN_TENSOR_NCHW;
     }
+
+    std::cerr
+    << "in batch size: " << in_batch_size
+    << " H: " << H
+    << " W: " << W
+    << " in_channels: " << in_channels
+    << " out_channels: " << out_channels
+    << " kernel_height: " << kernel_height
+    << " kernel_width: " << kernel_width
+    << " vertical stride: " << vertical_stride
+    << "horizontal stride: " << horizontal_stride
+    << " format: " << format
+    << std::endl;
 
     /*
     0 CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM
@@ -148,12 +167,16 @@ int main(int argc, const char *argv[]) {
         convolution. Significant workspace may be needed to store intermediate
         results.
      */
+    cudnnConvolutionFwdAlgo_t convolution_algorithm = CUDNN_CONVOLUTION_FWD_ALGO_FFT;
     // cudnnConvolutionFwdAlgo_t convolution_algorithm = CUDNN_CONVOLUTION_FWD_ALGO_FFT_TILING;
     // cudnnConvolutionFwdAlgo_t convolution_algorithm = CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD;
-    cudnnConvolutionFwdAlgo_t convolution_algorithm = CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM;
+    // cudnnConvolutionFwdAlgo_t convolution_algorithm = CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM;
 
     std::cout << "format: " << format << std::endl;
-    cv::Mat image = load_image(argv[1], format);
+    cv::Mat image = load_image(argv[1], format, H, W);
+
+    std::cerr << "Input image after loading: " << image.rows << " x "
+              << image.cols << " x " << image.channels() << std::endl;
 
     cudaSetDevice(gpu_id);
 
@@ -167,8 +190,8 @@ int main(int argc, const char *argv[]) {
             /*dataType=*/CUDNN_DATA_FLOAT,
             /*batch_size=*/in_batch_size,
             /*channels=*/in_channels,
-            /*image_height=*/image.rows,
-            /*image_width=*/image.cols));
+            /*image_height=*/H,
+            /*image_width=*/W));
 
     cudnnFilterDescriptor_t kernel_descriptor;
     checkCUDNN(cudnnCreateFilterDescriptor(&kernel_descriptor));
@@ -291,7 +314,7 @@ int main(int argc, const char *argv[]) {
         cudaMemcpy(d_input + i * image_bytes, image.ptr<float>(0), image_bytes,
                    cudaMemcpyHostToDevice);
 
-    int output_size = batch_size * height * width * channels;
+    int output_size = batch_size * height * width * channels * sizeof(float);
     float *d_output{nullptr};
     cudaMalloc(&d_output, output_size);
     cudaMemset(d_output, 0, output_size);
@@ -325,17 +348,17 @@ int main(int argc, const char *argv[]) {
         }
     }
 
-    float *d_kernel{nullptr};
+    float *d_kernel{nullptr}; // d stands for device memory
     cudaMalloc(&d_kernel, sizeof(h_kernel));
     cudaMemcpy(d_kernel, h_kernel, sizeof(h_kernel), cudaMemcpyHostToDevice);
 
     const float alpha = 1.0f, beta = 0.0f;
 
     cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
+    HANDLE_ERROR(cudaEventCreate(&start));
+    HANDLE_ERROR(cudaEventCreate(&stop));
 
-    cudaEventRecord(start);
+    HANDLE_ERROR(cudaEventRecord(start));
     checkCUDNN(cudnnConvolutionForward(cudnn,
                                        &alpha,
                                        input_descriptor,
@@ -349,11 +372,12 @@ int main(int argc, const char *argv[]) {
                                        &beta,
                                        output_descriptor,
                                        d_output));
-    cudaEventRecord(stop);
+    HANDLE_ERROR(cudaEventRecord(stop));
 
-    cudaEventSynchronize(stop);
+    HANDLE_ERROR(cudaEventSynchronize(stop));
     float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
+    HANDLE_ERROR(cudaEventElapsedTime(&milliseconds, start, stop));
+
     std::cout << "cuda elapsed time (ms): " << milliseconds << std::endl;
 
     if (with_sigmoid) {
@@ -379,12 +403,15 @@ int main(int argc, const char *argv[]) {
 
     save_image("cudnn-out.png", h_output, height, width);
 
+    HANDLE_ERROR(cudaEventDestroy(stop));
+    HANDLE_ERROR(cudaEventDestroy(start));
+
     delete[] h_output;
-    cudaFree(d_kernel);
-    cudaFree(d_input);
-    cudaFree(d_output);
+    HANDLE_ERROR(cudaFree(d_kernel));
+    HANDLE_ERROR(cudaFree(d_input));
+    HANDLE_ERROR(cudaFree(d_output));
 //  cudaFree(d_perfResults);
-    cudaFree(d_workspace);
+    HANDLE_ERROR(cudaFree(d_workspace));
 
     cudnnDestroyTensorDescriptor(input_descriptor);
     cudnnDestroyTensorDescriptor(output_descriptor);
